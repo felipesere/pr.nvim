@@ -2,13 +2,38 @@ local M = {}
 local async = require("pr.async")
 local cache = require("pr.cache")
 
--- Memory cache for PR list
-M.pr_cache = nil
+-- Memory caches, keyed by origin remote. Both `gh pr list` and repo detection
+-- target whatever repo is current, so a session that changes directory must not
+-- be served another repo's data.
+M.pr_cache = {}
 M.current_user = nil
 M.prefetch_in_progress = false
 M.auth_checked = false
 M.is_authenticated = nil
 M.auth_token = nil
+
+-- Origin remote of the cwd's repo, or nil outside a repo. A local git call with
+-- no network, so it is cheap enough to re-check instead of caching globally.
+local function origin_remote()
+  local remote = vim.fn.system("git remote get-url origin 2>/dev/null"):gsub("%s+", "")
+  if vim.v.shell_error ~= 0 or remote == "" then
+    return nil
+  end
+  return remote
+end
+
+-- Cached PR list for the current repo, if any.
+function M.get_cached_prs()
+  local remote = origin_remote()
+  return remote and M.pr_cache[remote] or nil
+end
+
+local function set_cached_prs(prs)
+  local remote = origin_remote()
+  if remote then
+    M.pr_cache[remote] = prs
+  end
+end
 
 -- Resolve the gh token once and memoise it for the session.
 function M.get_auth_token(callback)
@@ -125,7 +150,7 @@ function M.prefetch()
         pr.review_status = M.get_review_status(pr, M.current_user or "")
       end
       
-      M.pr_cache = prs
+      set_cached_prs(prs)
     end)
   end
   
@@ -147,23 +172,24 @@ function M.repo_from_url(url)
   return url:match("github%.com/([^/]+)/([^/]+)/pull")
 end
 
--- Cache for correct owner/repo casing
-M.repo_info_cache = nil
+-- Cache for correct owner/repo casing, keyed by remote so that changing
+-- directory resolves the new repo instead of returning the first one seen.
+M.repo_info_cache = {}
 
 function M.get_repo_info(callback)
-  -- Return cached if available
-  if M.repo_info_cache then
-    if callback then
-      callback(M.repo_info_cache.owner, M.repo_info_cache.repo)
-      return
-    end
-    return M.repo_info_cache.owner, M.repo_info_cache.repo
-  end
-  
-  local remote = vim.fn.system("git remote get-url origin 2>/dev/null"):gsub("%s+", "")
-  if vim.v.shell_error ~= 0 then
+  local remote = origin_remote()
+  if not remote then
     if callback then callback(nil, nil) end
     return nil, nil
+  end
+
+  local cached = M.repo_info_cache[remote]
+  if cached then
+    if callback then
+      callback(cached.owner, cached.repo)
+      return
+    end
+    return cached.owner, cached.repo
   end
 
   local owner, repo = remote:match("github%.com[:/]([^/]+)/([^/]+)")
@@ -183,13 +209,13 @@ function M.get_repo_info(callback)
       if not err and result and result:match("/") then
         local correct_owner, correct_repo = result:gsub("%s+", ""):match("([^/]+)/(.+)")
         if correct_owner and correct_repo then
-          M.repo_info_cache = { owner = correct_owner, repo = correct_repo }
+          M.repo_info_cache[remote] = { owner = correct_owner, repo = correct_repo }
           callback(correct_owner, correct_repo)
           return
         end
       end
       -- Fallback to parsed values
-      M.repo_info_cache = { owner = owner, repo = repo }
+      M.repo_info_cache[remote] = { owner = owner, repo = repo }
       callback(owner, repo)
     end)
     return
@@ -202,10 +228,11 @@ end
 function M.list_prs(filter, callback, on_update)
   filter = filter or ""
   
-  -- If we have cached data, show it immediately
-  if M.pr_cache and #M.pr_cache > 0 and filter == "" then
-    callback(M.pr_cache, nil)
-    
+  -- If we have cached data for this repo, show it immediately
+  local cached_prs = M.get_cached_prs()
+  if cached_prs and #cached_prs > 0 and filter == "" then
+    callback(cached_prs, nil)
+
     -- Refresh full data in background (skip fast load, we already have data)
     if on_update then
       M.fetch_full_prs(filter, on_update)
@@ -239,7 +266,7 @@ function M.fetch_full_prs(filter, on_update)
     end
     
     if filter == "" then
-      M.pr_cache = prs
+      set_cached_prs(prs)
     end
     
     if on_update then
@@ -286,7 +313,7 @@ function M.fetch_fresh_prs(filter, callback, on_update)
       
       -- Update cache if no filter
       if filter == "" then
-        M.pr_cache = full_prs
+        set_cached_prs(full_prs)
       end
       
       if on_update then

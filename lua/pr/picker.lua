@@ -24,7 +24,8 @@ function M.list_prs(opts)
   end
 
   local current_picker = nil
-  local has_cache = github.pr_cache and #github.pr_cache > 0 and filter == ""
+  local cached_prs = github.get_cached_prs()
+  local has_cache = cached_prs and #cached_prs > 0 and filter == ""
   
   if not has_cache then
     vim.notify("Loading PRs...", vim.log.levels.INFO)
