@@ -127,6 +127,15 @@ function M._pr_entry_maker(pr)
   }
 end
 
+-- Open a PR from a list entry using that entry's own URL for owner/repo. The
+-- list comes from whatever repo was current when it was fetched, so re-deriving
+-- the repo from the cwd can disagree with it and look up the number in the
+-- wrong repo. Falls back to cwd detection when the entry carries no URL.
+local function open_pr_entry(pr)
+  local owner, repo = require("pr.github").repo_from_url(pr.url)
+  require("pr.review").open(pr.number, owner, repo)
+end
+
 function M._select_prs(prs)
   local items = {}
   for _, pr in ipairs(prs) do
@@ -135,7 +144,7 @@ function M._select_prs(prs)
 
   vim.ui.select(items, { prompt = "Select PR:" }, function(_, idx)
     if idx then
-      require("pr.review").open(prs[idx].number)
+      open_pr_entry(prs[idx])
     end
   end)
 end
@@ -231,7 +240,7 @@ function M._telescope_prs(prs)
       actions.select_default:replace(function()
         actions.close(prompt_bufnr)
         local selection = action_state.get_selected_entry()
-        require("pr.review").open(selection.value.number)
+        open_pr_entry(selection.value)
       end)
       return true
     end,

@@ -32,10 +32,7 @@ function M.open_current_branch_pr(callback)
     end
     
     -- Extract owner/repo from URL (has correct casing)
-    local owner, repo
-    if pr.url then
-      owner, repo = pr.url:match("github%.com/([^/]+)/([^/]+)/pull")
-    end
+    local owner, repo = github.repo_from_url(pr.url)
     
     -- Found a PR, open it with correct owner/repo
     vim.schedule(function()

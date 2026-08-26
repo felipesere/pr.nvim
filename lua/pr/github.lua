@@ -116,7 +116,7 @@ function M.prefetch()
 
   -- Fetch user first, then PRs (need username for review status)
   local function fetch_prs()
-    local cmd = "gh pr list --limit 100 --json number,title,author,reviewDecision,reviews,reviewRequests,createdAt"
+    local cmd = "gh pr list --limit 100 --json number,title,author,reviewDecision,reviews,reviewRequests,createdAt,url"
     async.run_json(cmd, function(prs, err)
       M.prefetch_in_progress = false
       if err or not prs then return end
@@ -137,6 +137,14 @@ function M.prefetch()
   else
     fetch_prs()
   end
+end
+
+-- Extract owner/repo from a PR web URL. The URL names the base repo with its
+-- canonical casing, so it is correct for PRs from forks and, unlike
+-- get_repo_info, does not depend on the current working directory.
+function M.repo_from_url(url)
+  if not url then return nil, nil end
+  return url:match("github%.com/([^/]+)/([^/]+)/pull")
 end
 
 -- Cache for correct owner/repo casing
@@ -221,7 +229,7 @@ function M.fetch_full_prs(filter, on_update)
     return
   end
   
-  local cmd = string.format("gh pr list --limit 100 --json number,title,author,reviewDecision,reviews,reviewRequests,createdAt %s", filter)
+  local cmd = string.format("gh pr list --limit 100 --json number,title,author,reviewDecision,reviews,reviewRequests,createdAt,url %s", filter)
   
   async.run_json(cmd, function(prs, err)
     if err or not prs then return end
@@ -249,7 +257,7 @@ function M.fetch_fresh_prs(filter, callback, on_update)
   end
   
   -- Fast first load - basic info only
-  local cmd_fast = string.format("gh pr list --limit 50 --json number,title,author,createdAt %s", filter)
+  local cmd_fast = string.format("gh pr list --limit 50 --json number,title,author,createdAt,url %s", filter)
   
   async.run_json(cmd_fast, function(prs, err)
     if err or not prs then
@@ -267,7 +275,7 @@ function M.fetch_fresh_prs(filter, callback, on_update)
     end
     
     -- Now fetch full details in background
-    local cmd_full = string.format("gh pr list --limit 100 --json number,title,author,reviewDecision,reviews,reviewRequests %s", filter)
+    local cmd_full = string.format("gh pr list --limit 100 --json number,title,author,reviewDecision,reviews,reviewRequests,url %s", filter)
     
     async.run_json(cmd_full, function(full_prs, full_err)
       if full_err or not full_prs then return end
