@@ -294,25 +294,13 @@ function M._telescope_files(files, current)
 
   -- Cache the full diff
   local github = require("pr.github")
+  local diff = require("pr.diff")
   local full_diff = github.get_diff(current.owner, current.repo, current.number)
 
   local function extract_file_diff(file)
-    if not full_diff then return {} end
-    local lines = vim.split(full_diff, "\n")
     local result = {}
-    local in_file = false
-    local escaped = file:gsub("%-", "%%-"):gsub("%.", "%%.")
-
-    for _, line in ipairs(lines) do
-      if line:match("^diff %-%-git") then
-        if line:match("b/" .. escaped .. "$") then
-          in_file = true
-        else
-          if in_file then break end
-          in_file = false
-        end
-      end
-      if in_file and not line:match("^diff %-%-git") and not line:match("^index ") then
+    for _, line in ipairs(diff.by_file(full_diff)[file] or {}) do
+      if not line:match("^diff %-%-git") and not line:match("^index ") then
         table.insert(result, line)
       end
     end

@@ -528,28 +528,8 @@ function M.compute_line_diff(base_lines, head_lines)
 end
 
 function M.extract_file_diff(full_diff, file)
-  if not full_diff then return "" end
-
-  local lines = vim.split(full_diff, "\n")
-  local result = {}
-  local in_file = false
-  local escaped = file:gsub("%-", "%%-"):gsub("%.", "%%.")
-
-  for _, line in ipairs(lines) do
-    if line:match("^diff %-%-git") then
-      -- Match exact file path: a/path b/path
-      if line:match("b/" .. escaped .. "$") then
-        in_file = true
-      else
-        in_file = false
-      end
-    end
-    if in_file then
-      table.insert(result, line)
-    end
-  end
-
-  return table.concat(result, "\n")
+  local by_file = require("pr.diff").by_file(full_diff)
+  return table.concat(by_file[file] or {}, "\n")
 end
 
 -- reuse_tab: if true, render in current tab instead of creating new one
