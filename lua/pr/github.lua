@@ -367,14 +367,17 @@ function M.get_pr(owner, repo, pr_number, callback)
       return
     end
     
-    -- Get list of changed files
-    local files_cmd = string.format("gh pr view %s --repo %s/%s --json files --jq '.files[].path'", pr_number, owner, repo)
-    async.run(files_cmd, function(files_result, files_err)
-      if not files_err and files_result then
-        pr.files = vim.split(files_result, "\n", { trimempty = true })
+    -- The --json above already carries the file list, so flatten those objects
+    -- to paths here rather than spending a second gh pr view on --jq
+    local paths = {}
+    for _, file in ipairs(pr.files or {}) do
+      if file.path then
+        table.insert(paths, file.path)
       end
-      callback(pr, nil)
-    end)
+    end
+    pr.files = paths
+
+    callback(pr, nil)
   end)
 end
 
