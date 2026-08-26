@@ -465,8 +465,7 @@ function M._build_comment_cmd(owner, repo, pr_number, path, line, body, start_li
       "--field line=%d " ..
       "--field start_line=%d " ..
       "--field side=RIGHT " ..
-      "--field start_side=RIGHT " ..
-      "--field subject_type=line",
+      "--field start_side=RIGHT",
       owner, repo, pr_number, body, path, commit_id, line, start_line
     )
   else
@@ -476,8 +475,7 @@ function M._build_comment_cmd(owner, repo, pr_number, path, line, body, start_li
       "--field path=%q " ..
       "--field commit_id=%s " ..
       "--field line=%d " ..
-      "--field side=RIGHT " ..
-      "--field subject_type=line",
+      "--field side=RIGHT",
       owner, repo, pr_number, body, path, commit_id, line
     )
   end
