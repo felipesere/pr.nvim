@@ -8,17 +8,37 @@ M.current_user = nil
 M.prefetch_in_progress = false
 M.auth_checked = false
 M.is_authenticated = nil
+M.auth_token = nil
 
--- Check if user is authenticated with gh CLI
+-- Resolve the gh token once and memoise it for the session.
+function M.get_auth_token(callback)
+  if M.auth_token then
+    callback(M.auth_token)
+    return
+  end
+
+  async.run("gh auth token 2>/dev/null", function(result, _)
+    local token = (result or ""):gsub("%s+", "")
+    if token ~= "" then
+      M.auth_token = token
+    end
+    callback(M.auth_token)
+  end)
+end
+
+-- Check if user is authenticated with gh CLI.
+-- Holding a token is the same signal as `gh auth status`, but `gh auth status`
+-- validates it against the API over the network (~0.4s) while `gh auth token`
+-- reads local config (~0.06s), and the token is needed for raw fetches anyway.
 function M.check_auth(callback)
   if M.auth_checked then
     if callback then callback(M.is_authenticated) end
     return M.is_authenticated
   end
-  
-  async.run("gh auth status 2>&1", function(result, _)
+
+  M.get_auth_token(function(token)
     M.auth_checked = true
-    M.is_authenticated = result and result:match("Logged in to") ~= nil
+    M.is_authenticated = token ~= nil
     if callback then callback(M.is_authenticated) end
   end)
 end
@@ -90,7 +110,10 @@ end
 function M.prefetch()
   if M.prefetch_in_progress then return end
   M.prefetch_in_progress = true
-  
+
+  -- Warm the auth gate and token so the first command does not wait on them
+  M.check_auth()
+
   -- Fetch user first, then PRs (need username for review status)
   local function fetch_prs()
     local cmd = "gh pr list --limit 100 --json number,title,author,reviewDecision,reviews,reviewRequests,createdAt"
@@ -521,8 +544,12 @@ function M.get_file_content(owner, repo, ref, path, callback)
   -- URL-encode path components that might have special chars
   local encoded_path = path:gsub(" ", "%%20"):gsub("#", "%%23")
   local raw_url = string.format("https://raw.githubusercontent.com/%s/%s/%s/%s", owner, repo, ref, encoded_path)
-  -- Use double quotes for proper token interpolation
-  local raw_cmd = string.format('curl -sL -H "Authorization: token $(gh auth token)" %q 2>&1', raw_url)
+  -- Prefer the memoised token; the subshell is the fallback before it resolves.
+  -- Double quotes either way, so the substitution is interpolated.
+  local auth_header = M.auth_token
+    and string.format('"Authorization: token %s"', M.auth_token)
+    or '"Authorization: token $(gh auth token)"'
+  local raw_cmd = string.format('curl -sL -H %s %q 2>&1', auth_header, raw_url)
 
   if callback then
     async.run(raw_cmd, function(result, err)
