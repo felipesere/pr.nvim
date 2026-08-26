@@ -496,24 +496,47 @@ local function decode_base64(encoded)
 end
 
 function M.get_file_content(owner, repo, ref, path, callback)
+  -- Blob contents at a given SHA never change, so a hit is always safe to reuse.
+  -- Missing entries are nil; `false` records a file known to be absent at this SHA.
+  local cached = cache.get_blob(owner, repo, ref, path)
+  if cached == false then
+    if callback then
+      callback(nil, "File not found")
+      return
+    end
+    return nil, "File not found"
+  elseif cached then
+    if callback then
+      callback(cached, nil)
+      return
+    end
+    return cached, nil
+  end
+
+  local function is_missing(result)
+    return not result or result == "" or result:match("^404:") or result:match("^Not Found")
+  end
+
   -- Use raw.githubusercontent.com directly - most reliable for any file size
   -- URL-encode path components that might have special chars
   local encoded_path = path:gsub(" ", "%%20"):gsub("#", "%%23")
   local raw_url = string.format("https://raw.githubusercontent.com/%s/%s/%s/%s", owner, repo, ref, encoded_path)
   -- Use double quotes for proper token interpolation
   local raw_cmd = string.format('curl -sL -H "Authorization: token $(gh auth token)" %q 2>&1', raw_url)
-  
+
   if callback then
     async.run(raw_cmd, function(result, err)
+      -- Transport failures are transient, so they are never cached
       if err then
         callback(nil, err)
         return
       end
-      -- Check for 404 or error
-      if not result or result == "" or result:match("^404:") or result:match("^Not Found") then
+      if is_missing(result) then
+        cache.set_blob(owner, repo, ref, path, false)
         callback(nil, "File not found")
         return
       end
+      cache.set_blob(owner, repo, ref, path, result)
       callback(result, nil)
     end)
   else
@@ -521,9 +544,11 @@ function M.get_file_content(owner, repo, ref, path, callback)
     if vim.v.shell_error ~= 0 then
       return nil, result
     end
-    if not result or result == "" or result:match("^404:") or result:match("^Not Found") then
+    if is_missing(result) then
+      cache.set_blob(owner, repo, ref, path, false)
       return nil, "File not found"
     end
+    cache.set_blob(owner, repo, ref, path, result)
     return result, nil
   end
 end

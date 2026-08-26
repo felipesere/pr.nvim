@@ -76,4 +76,21 @@ function M.set_diff(owner, repo, number, diff)
   M.diff_cache[key] = diff
 end
 
+-- File blob cache (in-memory for session)
+-- Keyed by SHA, so contents are immutable and entries never need invalidating.
+-- A stored value of `false` records a file that is absent at that SHA.
+M.blob_cache = {}
+
+local function blob_key(owner, repo, sha, path)
+  return string.format("%s/%s@%s:%s", owner, repo, sha, path)
+end
+
+function M.get_blob(owner, repo, sha, path)
+  return M.blob_cache[blob_key(owner, repo, sha, path)]
+end
+
+function M.set_blob(owner, repo, sha, path, content)
+  M.blob_cache[blob_key(owner, repo, sha, path)] = content
+end
+
 return M
