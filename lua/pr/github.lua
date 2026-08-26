@@ -334,7 +334,7 @@ end
 
 function M.get_pr(owner, repo, pr_number, callback)
   local cmd = string.format(
-    "gh pr view %s --repo %s/%s --json number,title,body,author,files,comments,reviews,headRefName,baseRefName,createdAt",
+    "gh pr view %s --repo %s/%s --json number,title,body,author,files,comments,reviews,headRefName,baseRefName,baseRefOid,headRefOid,createdAt",
     pr_number, owner, repo
   )
   

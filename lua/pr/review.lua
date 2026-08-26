@@ -213,77 +213,67 @@ function M.show_full_file_diff(file, reuse_tab)
   
   local github = require("pr.github")
   local pr = M.current.pr
-  
-  -- Get base and head refs
-  local base_ref = pr.baseRefName or "main"
-  local head_ref = pr.headRefName or "HEAD"
-  
-  -- We need to fetch the head commit SHA for accurate file content
-  local async = require("pr.async")
   local owner, repo = M.current.owner, M.current.repo
-  
-  -- First get the PR details for exact refs
-  local pr_cmd = string.format("gh pr view %s --repo %s/%s --json baseRefOid,headRefOid", M.current.number, owner, repo)
-  async.run_json(pr_cmd, function(refs, err)
-    if err or not refs then
-      vim.notify("Failed to get PR refs, falling back to diff view", vim.log.levels.WARN)
-      vim.schedule(function()
-        local full_diff = github.get_diff(owner, repo, M.current.number)
-        local file_diff = M.extract_file_diff(full_diff, file)
-        M.show_side_by_side(file, file_diff, reuse_tab)
-      end)
-      return
-    end
-    
-    local base_sha = refs.baseRefOid
-    local head_sha = refs.headRefOid
-    
-    -- Fetch both file versions in parallel
-    local base_content = nil
-    local head_content = nil
-    local completed = 0
-    local base_error = false
-    local head_error = false
-    
-    local function on_complete()
-      completed = completed + 1
-      if completed < 2 then return end
-      
-      vim.schedule(function()
-        -- Handle new files (no base) or deleted files (no head)
-        if base_error and not head_error then
-          base_content = ""  -- New file
-        elseif head_error and not base_error then
-          head_content = ""  -- Deleted file
-        elseif base_error and head_error then
-          vim.notify("Failed to fetch file content, falling back to diff view", vim.log.levels.WARN)
-          local full_diff = github.get_diff(owner, repo, M.current.number)
-          local file_diff = M.extract_file_diff(full_diff, file)
-          M.show_side_by_side(file, file_diff, reuse_tab)
-          return
-        end
-        
-        M.render_full_file_diff(file, base_content or "", head_content or "", reuse_tab)
-      end)
-    end
-    
-    github.get_file_content(owner, repo, base_sha, file, function(content, fetch_err)
-      if fetch_err then
-        base_error = true
-      else
-        base_content = content
+
+  -- Base/head SHAs are immutable for the PR, so they come from the single
+  -- gh pr view in M.open rather than a round trip per file.
+  local base_sha = pr.baseRefOid
+  local head_sha = pr.headRefOid
+
+  local function fall_back_to_diff(msg)
+    vim.notify(msg, vim.log.levels.WARN)
+    local full_diff = github.get_diff(owner, repo, M.current.number)
+    local file_diff = M.extract_file_diff(full_diff, file)
+    M.show_side_by_side(file, file_diff, reuse_tab)
+  end
+
+  if not base_sha or not head_sha then
+    fall_back_to_diff("Missing PR refs, falling back to diff view")
+    return
+  end
+
+  -- Fetch both file versions in parallel
+  local base_content = nil
+  local head_content = nil
+  local completed = 0
+  local base_error = false
+  local head_error = false
+
+  local function on_complete()
+    completed = completed + 1
+    if completed < 2 then return end
+
+    vim.schedule(function()
+      -- Handle new files (no base) or deleted files (no head)
+      if base_error and not head_error then
+        base_content = ""  -- New file
+      elseif head_error and not base_error then
+        head_content = ""  -- Deleted file
+      elseif base_error and head_error then
+        fall_back_to_diff("Failed to fetch file content, falling back to diff view")
+        return
       end
-      on_complete()
+
+      M.render_full_file_diff(file, base_content or "", head_content or "", reuse_tab)
     end)
-    
-    github.get_file_content(owner, repo, head_sha, file, function(content, fetch_err)
-      if fetch_err then
-        head_error = true
-      else
-        head_content = content
-      end
-      on_complete()
-    end)
+  end
+
+  github.get_file_content(owner, repo, base_sha, file, function(content, fetch_err)
+    if fetch_err then
+      base_error = true
+    else
+      base_content = content
+    end
+    on_complete()
+  end)
+
+  github.get_file_content(owner, repo, head_sha, file, function(content, fetch_err)
+    if fetch_err then
+      head_error = true
+    else
+      head_content = content
+    end
+    on_complete()
   end)
 end
 
