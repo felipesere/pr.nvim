@@ -485,8 +485,8 @@ function M.add_comment(owner, repo, pr_number, path, line, body, start_line, cal
       end
       commit_id = commit_id:gsub("%s+", "")
       
-      local cmd = M._build_comment_cmd(owner, repo, pr_number, path, line, body, start_line, commit_id)
-      async.run(cmd, function(result, err)
+      local args = M._build_comment_args(owner, repo, pr_number, path, line, body, start_line, commit_id)
+      async.run(args, function(result, err)
         if err then
           local err_msg = (result or err):match('"message":"([^"]+)"') or err
           callback(nil, "Failed to add comment: " .. err_msg)
@@ -499,47 +499,46 @@ function M.add_comment(owner, repo, pr_number, path, line, body, start_line, cal
     -- Sync mode (legacy fallback)
     local sha_cmd = string.format("gh pr view %s --repo %s/%s --json headRefOid --jq .headRefOid", pr_number, owner, repo)
     local commit_id = vim.fn.system(sha_cmd):gsub("%s+", "")
-    
+
     if vim.v.shell_error ~= 0 or commit_id == "" then
       return nil, "Failed to get commit SHA"
     end
-    
-    local cmd = M._build_comment_cmd(owner, repo, pr_number, path, line, body, start_line, commit_id)
-    local result = vim.fn.system(cmd .. " 2>&1")
-    
-    if vim.v.shell_error ~= 0 then
+
+    local args = M._build_comment_args(owner, repo, pr_number, path, line, body, start_line, commit_id)
+    local code, out, err = async.run_sync(args)
+
+    if code ~= 0 then
+      local result = err ~= "" and err or out
       local err_msg = result:match('"message":"([^"]+)"') or result
       return nil, "Failed to add comment: " .. err_msg
     end
-    
+
     return true, nil
   end
 end
 
-function M._build_comment_cmd(owner, repo, pr_number, path, line, body, start_line, commit_id)
+-- Builds the argv list for `gh api ... comments`, passed directly to
+-- jobstart/system with no shell involved, so comment bodies containing
+-- shell metacharacters (backticks, $(...), etc. — common in markdown)
+-- are never interpreted.
+function M._build_comment_args(owner, repo, pr_number, path, line, body, start_line, commit_id)
+  local args = {
+    "gh", "api",
+    string.format("repos/%s/%s/pulls/%s/comments", owner, repo, pr_number),
+    "--method", "POST",
+    "--field", "body=" .. body,
+    "--field", "path=" .. path,
+    "--field", "commit_id=" .. commit_id,
+    "--field", "line=" .. tostring(line),
+    "--field", "side=RIGHT",
+  }
   if start_line and start_line < line then
-    return string.format(
-      "gh api repos/%s/%s/pulls/%s/comments --method POST " ..
-      "--field body=%q " ..
-      "--field path=%q " ..
-      "--field commit_id=%s " ..
-      "--field line=%d " ..
-      "--field start_line=%d " ..
-      "--field side=RIGHT " ..
-      "--field start_side=RIGHT",
-      owner, repo, pr_number, body, path, commit_id, line, start_line
-    )
-  else
-    return string.format(
-      "gh api repos/%s/%s/pulls/%s/comments --method POST " ..
-      "--field body=%q " ..
-      "--field path=%q " ..
-      "--field commit_id=%s " ..
-      "--field line=%d " ..
-      "--field side=RIGHT",
-      owner, repo, pr_number, body, path, commit_id, line
-    )
+    table.insert(args, "--field")
+    table.insert(args, "start_line=" .. tostring(start_line))
+    table.insert(args, "--field")
+    table.insert(args, "start_side=RIGHT")
   end
+  return args
 end
 
 -- Helper to decode base64, using Neovim's built-in if available
@@ -638,14 +637,15 @@ function M.delete_comment(owner, repo, comment_id)
 end
 
 function M.reply_to_comment(owner, repo, pr_number, comment_id, body)
-  local cmd = string.format(
-    "gh api repos/%s/%s/pulls/%s/comments/%s/replies -f body=%q 2>&1",
-    owner, repo, pr_number, comment_id, body
-  )
-  local result = vim.fn.system(cmd)
+  local args = {
+    "gh", "api",
+    string.format("repos/%s/%s/pulls/%s/comments/%s/replies", owner, repo, pr_number, comment_id),
+    "-f", "body=" .. body,
+  }
+  local code, out, err = async.run_sync(args)
 
-  if vim.v.shell_error ~= 0 then
-    return nil, "Failed to reply: " .. result
+  if code ~= 0 then
+    return nil, "Failed to reply: " .. (err ~= "" and err or out)
   end
 
   return true, nil
@@ -675,15 +675,17 @@ function M.submit_review(owner, repo, pr_number, event, body)
     body = "\xe2\x80\x8b"
   end
   
-  local cmd = string.format("gh pr review %s --repo %s/%s %s", pr_number, owner, repo, flag)
-  
+  local args = { "gh", "pr", "review", tostring(pr_number), "--repo", owner .. "/" .. repo, flag }
+
   if body and body ~= "" then
-    cmd = cmd .. string.format(" --body %q", body)
+    table.insert(args, "--body")
+    table.insert(args, body)
   end
 
-  local result = vim.fn.system(cmd .. " 2>&1")
+  local code, out, err = async.run_sync(args)
 
-  if vim.v.shell_error ~= 0 then
+  if code ~= 0 then
+    local result = err ~= "" and err or out
     -- Handle common errors with friendlier messages
     if result:match("Can not approve your own pull request") then
       return nil, "Cannot approve your own PR"
